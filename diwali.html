@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diwali Rocket Blasts</title>
+    <!-- Load Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+        /* Custom styles to ensure the canvas covers the whole screen */
+        body, html {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #00001a; /* Dark blue/black sky */
+            font-family: 'Inter', sans-serif;
+        }
+        #fireworks-canvas {
+            display: block;
+            touch-action: none; /* Prevents default browser actions like zooming/scrolling on touch */
+        }
+        /* Message overlay starts hidden and non-blocking */
+        #instruction {
+            display: none; 
+            opacity: 0;
+            pointer-events: none; /* Crucial: ensures clicks go to the canvas below */
+            transition: opacity 1.5s ease-in-out;
+        }
+        #instruction.message-mode {
+            /* This state is activated after 4 seconds */
+            display: flex;
+            background-color: rgba(0, 0, 0, 0.4); 
+            pointer-events: auto; /* Block further canvas interaction */
+        }
+    </style>
+</head>
+<body class="bg-gray-900 flex flex-col items-center justify-center min-h-screen">
+
+    <div id="app-container" class="relative w-full h-screen">
+        <canvas id="fireworks-canvas"></canvas>
+
+        <!-- Message Overlay - Starts hidden, shows up after 4 seconds -->
+        <div id="instruction" class="absolute inset-0 flex items-center justify-center">
+            <div id="message-content" class="text-white p-10 rounded-3xl shadow-2xl transform scale-105">
+                <!-- Content inserted by JS -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('fireworks-canvas');
+        const ctx = canvas.getContext('2d');
+        const instruction = document.getElementById('instruction');
+        const messageContent = document.getElementById('message-content');
+
+        let width, height;
+        let rockets = [];
+        let particles = [];
+        const gravity = 0.05;
+        const friction = 0.98;
+        let gamePhase = 'blasting'; // Start immediately in 'blasting' phase
+        
+        let autoLaunchInterval = null;
+
+        const colors = [
+            '#FFD700', '#FFA500', '#FF4500', '#ADFF2F', 
+            '#87CEFA', '#FF1493', '#F0F8FF', '#9400D3',
+        ];
+
+        // --- Helper Functions ---
+
+        /** Converts a hex color to an RGB object. */
+        function hexToRgb(hex) {
+            const bigint = parseInt(hex.slice(1), 16);
+            const r = (bigint >> 16) & 255;
+            const g = (bigint >> 8) & 255;
+            const b = bigint & 255;
+            return { r, g, b };
+        }
+
+        /** Resizes the canvas to fill the window. */
+        function resizeCanvas() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            ctx.fillStyle = '#00001a';
+            ctx.fillRect(0, 0, width, height);
+        }
+
+        // --- Particle Class (Explosion Fragments) ---
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.rgb = hexToRgb(color);
+                this.angle = Math.random() * Math.PI * 2;
+                this.speed = Math.random() * 5 + 1;
+                this.vx = Math.cos(this.angle) * this.speed;
+                this.vy = Math.sin(this.angle) * this.speed;
+                this.alpha = 1;
+                this.decay = Math.random() * 0.015 + 0.01;
+                this.size = Math.random() * 2 + 1;
+                this.life = 100;
+            }
+
+            update() {
+                this.vx *= friction;
+                this.vy *= friction;
+                this.vy += gravity;
+                this.x += this.vx;
+                this.y += this.vy;
+                this.alpha -= this.decay;
+                this.life--;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.fillStyle = `rgba(${this.rgb.r}, ${this.rgb.g}, ${this.rgb.b}, ${this.alpha})`;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2, false);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        // --- Rocket Class (Ascending Launch Vehicle) ---
+        class Rocket {
+            constructor(targetX) {
+                this.x = width / 2;
+                this.y = height;
+                this.targetX = targetX;
+                this.targetY = Math.random() * (height * 0.6) + (height * 0.1);
+                this.color = colors[Math.floor(Math.random() * colors.length)];
+
+                const dx = this.targetX - this.x;
+                const dy = this.targetY - this.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                const speed = 8; 
+
+                this.vx = (dx / distance) * speed;
+                this.vy = (dy / distance) * speed;
+                this.exploded = false;
+                this.trail = [];
+            }
+
+            update() {
+                if (this.exploded) return;
+                if (this.y < this.targetY || this.y < 0) {
+                    this.explode();
+                    return;
+                }
+                this.x += this.vx;
+                this.y += this.vy;
+                this.trail.push({ x: this.x, y: this.y, alpha: 1 });
+                for (let i = 0; i < this.trail.length; i++) {
+                    this.trail[i].alpha -= 0.05;
+                }
+                this.trail = this.trail.filter(p => p.alpha > 0.1);
+            }
+
+            draw() {
+                if (this.exploded) return;
+                ctx.save();
+                for (let i = 0; i < this.trail.length; i++) {
+                    const p = this.trail[i];
+                    ctx.fillStyle = `rgba(255, 255, 255, ${p.alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 1.5, 0, Math.PI * 2, false);
+                    ctx.fill();
+                }
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, 2.5, 0, Math.PI * 2, false);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            explode() {
+                this.exploded = true;
+                const particleCount = 75 + Math.floor(Math.random() * 50);
+                for (let i = 0; i < particleCount; i++) {
+                    particles.push(new Particle(this.x, this.y, this.color));
+                }
+            }
+        }
+
+        // --- Core Logic Functions ---
+
+        /** Launches a new rocket towards the given x-coordinate. */
+        function launchRocket(x) {
+            if (gamePhase !== 'blasting') return;
+            rockets.push(new Rocket(x));
+        }
+
+        function setupFinalMessage() {
+            // Stop automatic launches and user interaction on the canvas
+            clearInterval(autoLaunchInterval); 
+            canvas.style.pointerEvents = 'none';
+
+            // Transition state
+            gamePhase = 'message';
+
+            // Prepare and display the message
+            messageContent.className = 'bg-black bg-opacity-80 text-white p-10 rounded-3xl shadow-2xl transform scale-105';
+            messageContent.innerHTML = `
+                <h1 class="text-7xl font-extrabold mb-4 text-yellow-300 tracking-wider text-center">
+                    Happy Diwali 🎇
+                </h1>
+            `;
+            
+            // Bring the instruction overlay into view
+            instruction.style.display = 'flex'; 
+            // Give it a moment to render before fading in for smooth transition
+            setTimeout(() => {
+                instruction.style.opacity = 1;
+                // Allow interaction with the message if needed (though none is required here)
+                instruction.style.pointerEvents = 'auto'; 
+            }, 50); 
+        }
+
+        // --- Main Animation Loop ---
+
+        function animate() {
+            // Always fade the old frame for a beautiful trail effect
+            ctx.fillStyle = 'rgba(0, 0, 26, 0.15)';
+            ctx.fillRect(0, 0, width, height);
+
+            if (gamePhase === 'blasting') {
+                // Update and draw rockets
+                rockets.forEach((rocket) => {
+                    rocket.update();
+                    rocket.draw();
+                });
+                rockets = rockets.filter(rocket => !rocket.exploded);
+            }
+
+            // Always update and draw particles (let them fade out naturally regardless of phase)
+            particles.forEach((particle) => {
+                particle.update();
+                particle.draw();
+            });
+            particles = particles.filter(particle => particle.alpha > 0 && particle.life > 0);
+
+            requestAnimationFrame(animate);
+        }
+
+        // --- Event Listeners ---
+        canvas.addEventListener('click', (e) => { launchRocket(e.clientX); });
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault(); 
+            if (e.touches.length > 0) { launchRocket(e.touches[0].clientX); }
+        });
+
+        // --- Initialization ---
+
+        window.onload = () => {
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+            
+            // 1. Start Automatic ambient rocket launches immediately (Blasting Phase)
+            autoLaunchInterval = setInterval(() => {
+                if (rockets.length < 5 && gamePhase === 'blasting') {
+                    const randomX = Math.random() * width;
+                    launchRocket(randomX);
+                }
+            }, 500); // Launches one every half-second for a good show
+
+            // 2. Set the 4-second timer to transition to the message
+            setTimeout(() => {
+                setupFinalMessage();
+            }, 4000); // 4 seconds
+
+            // 3. Start the main animation loop
+            animate();
+        };
+
+    </script>
+</body>
+</html>
